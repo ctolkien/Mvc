@@ -55,7 +55,7 @@ namespace Microsoft.AspNetCore.Mvc.Razor.TagHelpers
     {
         // Valid whitespace characters defined by the HTML5 spec.
         private static readonly char[] ValidAttributeWhitespaceChars =
-            new[] { '\t', '\n', '\u000C', '\r', ' ' };
+             { '\t', '\n', '\u000C', '\r', ' ' };
         private static readonly Dictionary<string, string[]> ElementAttributeLookups =
             new Dictionary<string, string[]>(StringComparer.OrdinalIgnoreCase)
             {
@@ -83,6 +83,13 @@ namespace Microsoft.AspNetCore.Mvc.Razor.TagHelpers
                 { "track", new[] { "src" } },
                 { "video", new[] { "poster", "src" } },
             };
+
+
+        private static readonly ISet<string> MultipleUrlAttributeLookups =
+            new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+        {
+            "srcset"
+        };
 
         /// <summary>
         /// Creates a new <see cref="UrlResolutionTagHelper"/>.
@@ -169,14 +176,25 @@ namespace Microsoft.AspNetCore.Mvc.Razor.TagHelpers
                 {
                     continue;
                 }
-
+                var attributeCanAcceptMultipleUrls = MultipleUrlAttributeLookups.Contains(attributeName);
                 var stringValue = attribute.Value as string;
                 if (stringValue != null)
                 {
                     string resolvedUrl;
-                    if (TryResolveUrl(stringValue, resolvedUrl: out resolvedUrl))
+
+                    if (attributeCanAcceptMultipleUrls)
                     {
-                        output.Attributes[i] = new TagHelperAttribute(attribute.Name, resolvedUrl);
+                        if (TryResolveUrl(stringValue.Split(','), resolvedUrl: out resolvedUrl))
+                        {
+                            output.Attributes[i] = new TagHelperAttribute(attribute.Name, resolvedUrl);
+                        }
+                    }
+                    else
+                    {
+                        if (TryResolveUrl(stringValue, resolvedUrl: out resolvedUrl))
+                        {
+                            output.Attributes[i] = new TagHelperAttribute(attribute.Name, resolvedUrl);
+                        }
                     }
                 }
                 else
@@ -238,6 +256,26 @@ namespace Microsoft.AspNetCore.Mvc.Razor.TagHelpers
             return true;
         }
 
+        private bool TryResolveUrl(string[] url, out string resolvedUrl)
+        {
+            var resolvedUrls = new List<string>();
+            var urlHelper = UrlHelperFactory.GetUrlHelper(ViewContext);
+            var valid = true;
+            for (int i = 0; i < url.Length; i++)
+            {
+                var start = FindRelativeStart(url[i]);
+                if (start == -1)
+                {
+                    valid = false; //we can't short out early, later iterations may be valid
+                }
+                var trimmedUrl = CreateTrimmedString(url[i], start);
+                resolvedUrls.Add(urlHelper.Content(trimmedUrl));
+            }
+            resolvedUrl = string.Join(", ", resolvedUrls);
+
+            return valid;
+        }
+
         /// <summary>
         /// Tries to resolve the given <paramref name="url"/> value relative to the application's 'webroot' setting.
         /// </summary>
@@ -281,6 +319,48 @@ namespace Microsoft.AspNetCore.Mvc.Razor.TagHelpers
 
             return true;
         }
+
+        protected bool TryResolveUrl(string[] url, out IHtmlContent resolvedUrl)
+        {
+            var resolvedUrls = new List<IHtmlContent>();
+            var urlHelper = UrlHelperFactory.GetUrlHelper(ViewContext);
+
+            var valid = true;
+            for (int i = 0; i < url.Length; i++)
+            {
+                var start = FindRelativeStart(url[i]);
+                if (start == -1)
+                {
+                    valid = false; //we can't short out early, later iterations may be valid
+                }
+
+                var trimmedUrl = CreateTrimmedString(url[i], start);
+                var appRelativeUrl = urlHelper.Content(trimmedUrl);
+                var postTildeSlashUrlValue = trimmedUrl.Substring(2);
+
+                if (!appRelativeUrl.EndsWith(postTildeSlashUrlValue, StringComparison.Ordinal))
+                {
+                    throw new InvalidOperationException(
+                        Resources.FormatCouldNotResolveApplicationRelativeUrl_TagHelper(
+                            url,
+                            nameof(IUrlHelper),
+                            nameof(IUrlHelper.Content),
+                            "removeTagHelper",
+                            typeof(UrlResolutionTagHelper).FullName,
+                            typeof(UrlResolutionTagHelper).GetTypeInfo().Assembly.GetName().Name));
+                }
+
+                resolvedUrls.Add(new EncodeMultiSegmentContent(
+                    appRelativeUrl,
+                    appRelativeUrl.Length - postTildeSlashUrlValue.Length,
+                    postTildeSlashUrlValue));
+            }
+            resolvedUrl = resolvedUrls[0];
+
+            return valid;
+        }
+
+
 
         private static int FindRelativeStart(string url)
         {
@@ -360,6 +440,26 @@ namespace Microsoft.AspNetCore.Mvc.Razor.TagHelpers
             public void WriteTo(TextWriter writer, HtmlEncoder encoder)
             {
                 encoder.Encode(writer, _firstSegment, 0, _firstSegmentLength);
+                writer.Write(_secondSegment);
+            }
+        }
+        private class EncodeMultiSegmentContent : IHtmlContent
+        {
+            private readonly IDictionary<string, int> _segments;
+            private readonly string _secondSegment;
+
+            public EncodeMultiSegmentContent(IDictionary<string, int> segments, string secondSegment)
+            {
+                _segments = segments;
+                _secondSegment = secondSegment;
+            }
+
+            public void WriteTo(TextWriter writer, HtmlEncoder encoder)
+            {
+                for (int i = 0; i < _segments.Count; i++)
+                {
+                    //encoder.Encode(writer, _firstSegment, 0, _firstSegmentLength);
+                }
                 writer.Write(_secondSegment);
             }
         }

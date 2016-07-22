@@ -176,6 +176,123 @@ namespace Microsoft.AspNetCore.Mvc.Razor.TagHelpers
             }
         }
 
+        public static TheoryData ResolvableSrcSetAttributeData
+        {
+            get
+            {
+                // url, expectedHref
+                return new TheoryData<string, string>
+                 {
+                    { "~/content/image.png 1x", "/approot/content/image.png 1x" },
+                    { "  ~/content/image.png 1x, ~/content/image@2.png 2x", "HtmlEncode[[/approot/]]/content/image.png 1x, HtmlEncode[[/approot/]]/content/image@2.png 2x" },
+                    { "~/content/image.png ~/secondValue/image.png", "HtmlEncode[[/approot/]]/content/image.png ~/secondValue/image.png" },
+                    { "~/content/image.png 200w, ~/content/image@2.png 400w", "HtmlEncode[[/approot/]]/content/image.png 200w, HtmlEncode[[/approot/]]/content/image@2.png 400w" },
+                    { "/content/image.png 200w, ~/content/image@2.png 400w", "/content/image.png 200w, HtmlEncode[[/approot/]]/content/image@2.png 400w" },
+
+                 };
+            }
+        }
+
+        [Theory]
+        [MemberData(nameof(ResolvableSrcSetAttributeData))]
+        public void Process_ResolvesImgSrcSetWithMultipleUrls(string url, string expectedHref)
+        {
+            // Arrange
+            var tagHelperOutput = new TagHelperOutput(tagName: "img",
+                attributes: new TagHelperAttributeList
+                {
+                     { "srcset", url }
+                },
+                getChildContentAsync: (useCachedResult, encoder) => Task.FromResult<TagHelperContent>(null));
+
+            var urlHelperMock = new Mock<IUrlHelper>();
+            urlHelperMock
+                .Setup(urlHelper => urlHelper.Content(It.IsAny<string>()))
+                .Returns(new Func<string, string>(value => "/approot" + value.Substring(1)));
+
+            var urlHelperFactory = new Mock<IUrlHelperFactory>();
+            urlHelperFactory
+                .Setup(f => f.GetUrlHelper(It.IsAny<ActionContext>()))
+                .Returns(urlHelperMock.Object);
+
+            var tagHelper = new UrlResolutionTagHelper(urlHelperFactory.Object, new HtmlTestEncoder());
+
+            var context = new TagHelperContext(
+                allAttributes: new TagHelperAttributeList(
+                    Enumerable.Empty<TagHelperAttribute>()),
+                items: new Dictionary<object, object>(),
+                uniqueId: "test");
+
+            // Act
+            tagHelper.Process(context, tagHelperOutput);
+
+            // Assert
+            var attribute = Assert.Single(tagHelperOutput.Attributes);
+            Assert.Equal("srcset", attribute.Name, StringComparer.Ordinal);
+            var attributeValue = Assert.IsType<string>(attribute.Value);
+            Assert.Equal(expectedHref, attributeValue, StringComparer.Ordinal);
+            Assert.Equal(HtmlAttributeValueStyle.DoubleQuotes, attribute.ValueStyle);
+
+        }
+
+        public static TheoryData ResolvableSrcSetHtmlStringData
+        {
+            get
+            {
+                // url, expectedHref
+                return new TheoryData<HtmlString, string>
+                 {
+                    { new HtmlString("~/content/image.png 1x"), "/approot/content/image.png 1x" },
+                    { new HtmlString("  ~/content/image.png 1x, ~/content/image@2.png 2x"), "/approot/content/image.png 1x, /approot/content/image@2.png 2x" },
+                    { new HtmlString("~/content/image.png ~/secondValue/image.png"), "/approot/content/image.png ~/secondValue/image.png" },
+                    { new HtmlString("~/content/image.png 200w, ~/content/image@2.png 400w"), "/approot/content/image.png 200w, /approot/content/image@2.png 400w" },
+                    { new HtmlString("/content/image.png 200w, ~/content/image@2.png 400w"), "/content/image.png 200w, /approot/content/image@2.png 400w" },
+                 };
+            }
+        }
+
+        [Theory]
+        [MemberData(nameof(ResolvableSrcSetHtmlStringData))]
+        public void Process_ResolvesImgSrcSetWithMultipleUrls_InHtmlString(HtmlString url, string expectedHref)
+        {
+            // Arrange
+            var tagHelperOutput = new TagHelperOutput(tagName: "img",
+                attributes: new TagHelperAttributeList
+                {
+                     { "srcset", url }
+                },
+                getChildContentAsync: (useCachedResult, encoder) => Task.FromResult<TagHelperContent>(null));
+
+            var urlHelperMock = new Mock<IUrlHelper>();
+            urlHelperMock
+                .Setup(urlHelper => urlHelper.Content(It.IsAny<string>()))
+                .Returns(new Func<string, string>(value => "/approot" + value.Substring(1)));
+
+            var urlHelperFactory = new Mock<IUrlHelperFactory>();
+            urlHelperFactory
+                .Setup(f => f.GetUrlHelper(It.IsAny<ActionContext>()))
+                .Returns(urlHelperMock.Object);
+
+            var tagHelper = new UrlResolutionTagHelper(urlHelperFactory.Object, new HtmlTestEncoder());
+
+            var context = new TagHelperContext(
+                allAttributes: new TagHelperAttributeList(
+                    Enumerable.Empty<TagHelperAttribute>()),
+                items: new Dictionary<object, object>(),
+                uniqueId: "test");
+
+            // Act
+            tagHelper.Process(context, tagHelperOutput);
+
+            // Assert
+            var attribute = Assert.Single(tagHelperOutput.Attributes);
+            Assert.Equal("srcset", attribute.Name, StringComparer.Ordinal);
+            var htmlContent = Assert.IsAssignableFrom<IHtmlContent>(attribute.Value);
+            Assert.Equal(expectedHref, HtmlContentUtilities.HtmlContentToString(htmlContent), StringComparer.Ordinal);
+            Assert.Equal(HtmlAttributeValueStyle.DoubleQuotes, attribute.ValueStyle);
+
+        }
+
         [Theory]
         [MemberData(nameof(UnresolvableUrlData))]
         public void Process_DoesNotResolveNonTildeSlashValues(string url)
